@@ -5,6 +5,9 @@ const app = express();
 const server = require('http').Server(app);
 const io = require('socket.io').listen(server);
 
+const Datauri = require('datauri');
+
+const datauri = new Datauri();
 
 const { JSDOM } = jsdom;
 
@@ -24,6 +27,13 @@ function setupAuthoritativePhaser() {
     pretendToBeVisual: true
   }).then((dom) => {
     dom.window.gameLoaded = () => {
+      dom.window.URL.createObjectURL = (blob) => {
+        if (blob){
+          return datauri.format(blob.type, blob[Object.getOwnPropertySymbols(blob)[0]]._buffer).content;
+        }
+      };
+      dom.window.URL.revokeObjectURL = (objectURL) => {};
+
       let port = process.env.PORT;
       if (port == null || port == "") {
         port = 8081;

@@ -5,6 +5,7 @@
   "main": "game.js",
   "dependencies": {
     "canvas": "^2.6.1",
+    "datauri": "^2.0.0",
     "express": "^4.17.1",
     "jsdom": "^16.2.2",
     "phaser": "^3.22.0",
