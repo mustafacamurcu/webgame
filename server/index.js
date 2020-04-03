@@ -24,6 +24,10 @@ function setupAuthoritativePhaser() {
     pretendToBeVisual: true
   }).then((dom) => {
     dom.window.gameLoaded = () => {
+      let port = process.env.PORT;
+      if (port == null || port == "") {
+        port = 8000;
+      }
       server.listen(8081, function () {
         console.log(`Listening on ${server.address().port}`);
       });
