@@ -3,6 +3,10 @@ var config = {
   parent: 'game',
   width: 800,
   heigth: 640,
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH
+  },
   scene: {
     preload: preload,
     create: create,
@@ -10,67 +14,133 @@ var config = {
   }
 };
 
-var game = new Phaser.Game(config);
+var Game = new Phaser.Game(config);
 
 function preload() {
-  this.load.image('ship', 'assets/spaceShips_001.png');
-  this.load.image('otherPlayer', 'assets/enemyBlack5.png');
-  this.load.image('star', 'assets/star_gold.png');
+  // Image layers from Tiled can't be exported to Phaser 3 (as yet)
+  // So we add the background image separately
+  this.load.image('background', 'assets/images/background.png');
+  // Load the tileset image file, needed for the map to know what
+  // tiles to draw on the screen
+  this.load.image('tiles', 'assets/tilesets/platformPack_tilesheet.png');
+  // Even though we load the tilesheet with the spike image, we need to
+  // load the Spike image separately for Phaser 3 to render it
+  this.load.image('spike', 'assets/images/spike.png');
+  // Load the export Tiled JSON
+  this.load.tilemapTiledJSON('map', 'assets/tilemaps/level1.json');
+  // Load player animations from the player spritesheet and atlas JSON
+  this.load.atlas('mustafa', 'assets/images/kenney_player.png',
+    'assets/images/kenney_player_atlas.json');
+  this.load.atlas('ihsan', 'assets/images/kenney_player.png',
+    'assets/images/kenney_player_atlas.json');
 }
 
 function create() {
-  var self = this;
+  var game = this;
+
   this.socket = io();
   this.players = this.add.group();
-  this.blueScoreText = this.add.text(16, 16, '', { fontSize: '32px', fill: '#0000FF' });
-  this.redScoreText = this.add.text(584, 16, '', { fontSize: '32px', fill: '#FF0000' });
 
   this.socket.on('currentPlayers', function (players) {
-    Object.keys(players).forEach(function (id) {
-      if (players[id].playerId === self.socket.id) {
-        displayPlayers(self, players[id], 'ship');
-        console.log(id);
-      } else {
-        displayPlayers(self, players[id], 'otherPlayer');
-        console.log(id);
-      }
-    });
+    Object.values(players).forEach(playerInfo => addPlayers(game, playerInfo));
   });
 
-  this.socket.on('newPlayer', function (playerInfo) {
-    console.log(playerInfo);
-    displayPlayers(self, playerInfo, 'otherPlayer');
-  });
+  this.socket.on('newPlayer', playerInfo => addPlayers(game, playerInfo));
 
   this.socket.on('disconnect', function (playerId) {
-    self.players.getChildren().forEach(function (player) {
+    game.players.getChildren().forEach(function (player) {
       if (playerId === player.playerId) {
         player.destroy();
       }
     });
   });
+
   this.socket.on('playerUpdates', function (players) {
     Object.keys(players).forEach(function (id) {
-      self.players.getChildren().forEach(function (player) {
+      game.players.getChildren().forEach(function (player) {
         if (players[id].playerId === player.playerId) {
           player.setRotation(players[id].rotation);
           player.setPosition(players[id].x, players[id].y);
+          player.setFlipX(players[id].direction == 'left');
+          player.play(players[id].anim, true);
         }
       });
     });
   });
-  this.socket.on('updateScore', function (scores) {
-    self.blueScoreText.setText('Blue: ' + scores.blue);
-    self.redScoreText.setText('Red: ' + scores.red);
+
+  // Create a tile map, which is used to bring our level in Tiled
+  // to our game world in Phaser
+  const map = this.make.tilemap({ key: 'map' });
+  // Add the tileset to the map so the images would load correctly in Phaser
+  const tileset = map.addTilesetImage('kenney_simple_platformer', 'tiles');
+  // Place the background image in our game world
+  const backgroundImage = this.add.image(0, 0, 'background').setOrigin(0, 0);
+  // Scale the image to better match our game's resolution
+  backgroundImage.setScale(2, 0.8);
+  // Add the platform layer as a static group, the player would be able
+  // to jump on platforms like world collisions but they shouldn't move
+  const platforms = map.createStaticLayer('Platforms', tileset, 0, 200);
+  // There are many ways to set collision between tiles and players
+  // As we want players to collide with all of the platforms, we tell Phaser to
+  // set collisions for every tile in our platform layer whose index isn't -1.
+  // Tiled indices can only be >= 0, therefore we are colliding with all of
+  // the platform layer
+  platforms.setCollisionByExclusion(-1, true);
+
+  // Create the walking animation using the last 2 frames of
+  // the atlas' first row
+  this.anims.create({
+    key: 'walk',
+    frames: this.anims.generateFrameNames('mustafa', {
+      prefix: 'robo_player_',
+      start: 2,
+      end: 3,
+    }),
+    frameRate: 10,
+    repeat: -1
   });
 
-  this.socket.on('starLocation', function (starLocation) {
-    if (!self.star) {
-      self.star = self.add.image(starLocation.x, starLocation.y, 'star');
-    } else {
-      self.star.setPosition(starLocation.x, starLocation.y);
-    }
+  // Create an idle animation i.e the first frame
+  this.anims.create({
+    key: 'idle',
+    frames: [{ key: 'mustafa', frame: 'robo_player_0' }],
+    frameRate: 10,
   });
+
+  // Use the second frame of the atlas for jumping
+  this.anims.create({
+    key: 'jump',
+    frames: [{ key: 'mustafa', frame: 'robo_player_1' }],
+    frameRate: 10,
+  });
+
+  this.anims.create({
+    key: 'walk',
+    frames: this.anims.generateFrameNames('ihsan', {
+      prefix: 'robo_player_',
+      start: 2,
+      end: 3,
+    }),
+    frameRate: 10,
+    repeat: -1
+  });
+
+  // Create an idle animation i.e the first frame
+  this.anims.create({
+    key: 'idle',
+    frames: [{ key: 'ihsan', frame: 'robo_player_0' }],
+    frameRate: 10,
+  });
+
+  // Use the second frame of the atlas for jumping
+  this.anims.create({
+    key: 'jump',
+    frames: [{ key: 'ihsan', frame: 'robo_player_1' }],
+    frameRate: 10,
+  });
+
+
+
   this.cursors = this.input.keyboard.createCursorKeys();
   this.leftKeyPressed = false;
   this.rightKeyPressed = false;
@@ -97,15 +167,20 @@ function update() {
     this.upKeyPressed = false;
   }
 
-  if (left !== this.leftKeyPressed || right !== this.rightKeyPressed || up !== this.upKeyPressed) {
-    this.socket.emit('playerInput', { left: this.leftKeyPressed , right: this.rightKeyPressed, up: this.upKeyPressed });
+  if (left !== this.leftKeyPressed
+      || right !== this.rightKeyPressed
+      || up !== this.upKeyPressed) {
+    this.socket.emit('playerInput',
+      { left: this.leftKeyPressed,
+        right: this.rightKeyPressed,
+        up: this.upKeyPressed });
   }
 }
 
-function displayPlayers(self, playerInfo, sprite) {
-  const player = self.add.sprite(playerInfo.x, playerInfo.y, sprite).setOrigin(0.5, 0.5).setDisplaySize(53, 40);
-  if (playerInfo.team === 'blue') player.setTint(0x0000ff);
-  else player.setTint(0xff0000);
+function addPlayers(game, playerInfo) {
+  const player = game.add.sprite(playerInfo.x, playerInfo.y, playerInfo.character);
+  player.setOrigin(playerInfo.x, playerInfo.y);
+  player.setDisplaySize(53, 40);
   player.playerId = playerInfo.playerId;
-  self.players.add(player);
+  game.players.add(player);
 }

@@ -1,4 +1,7 @@
-const players = {};
+const players = {}
+const characters = ["mustafa", "ihsan"];
+
+function WebGLTexture() { }
 
 const config = {
   type: Phaser.HEADLESS,
@@ -9,8 +12,12 @@ const config = {
     default: 'arcade',
     arcade: {
       debug: false,
-      gravity: { y: 0 }
+      gravity: { y: 500 }
     }
+  },
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH
   },
   scene: {
     preload: preload,
@@ -21,128 +28,157 @@ const config = {
 };
 
 function preload() {
-  this.load.image('star', 'assets/star_gold.png');
+  // Image layers from Tiled can't be exported to Phaser 3 (as yet)
+  // So we add the background image separately
+  this.load.image('background', 'assets/images/background.png');
+  // Load the tileset image file, needed for the map to know what
+  // tiles to draw on the screen
+  this.load.image('tiles', 'assets/tilesets/platformPack_tilesheet.png');
+  // Even though we load the tilesheet with the spike image, we need to
+  // load the Spike image separately for Phaser 3 to render it
+  this.load.image('spike', 'assets/images/spike.png');
+  // Load the export Tiled JSON
+  this.load.tilemapTiledJSON('map', 'assets/tilemaps/level1.json');
+  // Load player animations from the player spritesheet and atlas JSON
+  this.load.atlas('mustafa', 'assets/images/kenney_player.png',
+    'assets/images/kenney_player_atlas.json');
+  this.load.atlas('ihsan', 'assets/images/kenney_player.png',
+    'assets/images/kenney_player_atlas.json');
 }
 
 function create() {
-  const self = this;
-  this.players = this.physics.add.group();
-  this.scores = {
-    blue: 0,
-    red: 0
-  };
+  const game = this;
 
-  this.star = this.physics.add.image(randomPosition(700), randomPosition(500), 'star');
-  this.physics.add.collider(this.players);
-
-  this.physics.add.overlap(this.players, this.star, function (star, player) {
-    if (players[player.playerId].team === 'red') {
-      self.scores.red += 10;
-    } else {
-      self.scores.blue += 10;
-    }
-    self.star.setPosition(randomPosition(700), randomPosition(500));
-    io.emit('updateScore', self.scores);
-    io.emit('starLocation', { x: self.star.x, y: self.star.y });
-  });
+  game.players = this.physics.add.group();
+  game.physics.add.collider(game.players);
 
   io.on('connection', function (socket) {
-    console.log('a user connected');
-    // create a new player and add it to our players object
+    console.log('User ('+socket.id+') connected.');
+
     players[socket.id] = {
-      rotation: 0,
-      x: Math.floor(Math.random() * 700) + 50,
-      y: Math.floor(Math.random() * 500) + 50,
+      direction: 'right',
+      x: randomPosition(50, 700),
+      y: 300,
+      anim: 'idle',
       playerId: socket.id,
-      team: (Math.floor(Math.random() * 2) == 0) ? 'red' : 'blue',
+      character: randomCharacter(),
       input: {
         left: false,
         right: false,
         up: false
       }
     };
-    // add player to server
-    addPlayer(self, players[socket.id]);
+
+    // Create a tile map, which is used to bring our level in Tiled
+    // to our game world in Phaser
+    const map = game.make.tilemap({ key: 'map' });
+    // Add the tileset to the map so the images would load correctly in Phaser
+    const tileset = map.addTilesetImage('kenney_simple_platformer', 'tiles');
+    // Place the background image in our game world
+    const backgroundImage = game.add.image(0, 0, 'background').setOrigin(0, 0);
+    // Scale the image to better match our game's resolution
+    backgroundImage.setScale(2, 0.8);
+    // Add the platform layer as a static group, the player would be able
+    // to jump on platforms like world collisions but they shouldn't move
+    const platforms = map.createStaticLayer('Platforms', tileset, 0, 200);
+    // There are many ways to set collision between tiles and players
+    // As we want players to collide with all of the platforms, we tell Phaser to
+    // set collisions for every tile in our platform layer whose index isn't -1.
+    // Tiled indices can only be >= 0, therefore we are colliding with all of
+    // the platform layer
+    platforms.setCollisionByExclusion(-1, true);
+
+    addPlayer(game, players[socket.id], platforms);
+
     // send the players object to the new player
     socket.emit('currentPlayers', players);
     // update all other players of the new player
     socket.broadcast.emit('newPlayer', players[socket.id]);
-        // send the star object to the new player
-    socket.emit('starLocation', { x: self.star.x, y: self.star.y });
-    // send the current scores
-    socket.emit('updateScore', self.scores);
+
     socket.on('disconnect', function () {
-      console.log('user disconnected');
-      // remove player from server
-      removePlayer(self, socket.id);
-      // remove this player from our players object
-      delete players[socket.id];
+      console.log('User ('+socket.id+') disconnected.');
       // emit a message to all players to remove this player
+      removePlayer(game, socket.id);
       io.emit('disconnect', socket.id);
-    });
-    socket.on('playerInput', function (inputData) {
-      handlePlayerInput(self, socket.id, inputData);
+      delete players[socket.id];
     });
 
+    socket.on('playerInput', function (inputData) {
+      handlePlayerInput(game, socket.id, inputData);
+    });
   });
+
+
 }
 
 function update() {
   this.players.getChildren().forEach((player) => {
-    const input = players[player.playerId].input;
+    let id = player.playerId;
+    let anim = 'idle';
+    const input = players[id].input;
     if (input.left) {
-      player.setAngularVelocity(-300);
+      //player.setVelocityX(-200);
+      if (player.body.onFloor()) {
+        anim = 'walk';
+      }
     } else if (input.right) {
-      player.setAngularVelocity(300);
+      //player.setVelocityX(200);
+      if (player.body.onFloor()) {
+        anim = 'walk';
+      }
     } else {
-      player.setAngularVelocity(0);
+      player.setVelocityX(0);
     }
 
-    if (input.up) {
-      this.physics.velocityFromRotation(player.rotation + 1.5, 200, player.body.acceleration);
-    } else {
-      player.setAcceleration(0);
+    if (input.up && player.body.onFloor()) {
+      player.setVelocityY(-350);
+      anim = 'jump';
     }
 
-    players[player.playerId].x = player.x;
-    players[player.playerId].y = player.y;
-    players[player.playerId].rotation = player.rotation;
+    players[id].x = player.x;
+    players[id].y = player.y;
+    players[id].direction = player.body.velocity.x < 0 ? 'left' : 'right';
+    players[id].anim = anim;
   });
-  this.physics.world.wrap(this.players, 5);
+
   io.emit('playerUpdates', players);
 }
 
-function randomPosition(max) {
-  return Math.floor(Math.random() * max) + 50;
+function randomPosition(min, max) {
+  return Math.floor(Math.random() * max) + min;
 }
 
-function addPlayer(self, playerInfo) {
-  const player = self.physics.add.image(playerInfo.x, playerInfo.y, 'ship').setOrigin(0.5, 0.5).setDisplaySize(53, 40);
-  player.setDrag(100);
-  player.setAngularDrag(100);
-  player.setMaxVelocity(200);
+function randomCharacter() {
+  return characters[randomPosition(0,2)];
+}
+
+function addPlayer(game, playerInfo, platforms) {
+  const player = game.physics.add.sprite(playerInfo.x, playerInfo.y, playerInfo.character);
+  player.setOrigin(playerInfo.x, playerInfo.y);
+  player.setDisplaySize(53, 40);
   player.setBounce(0.1); // our player will bounce from items
   player.setCollideWorldBounds(true); // don't go out of the map
+  game.physics.add.collider(player, platforms);
   player.playerId = playerInfo.playerId;
-  self.players.add(player);
+  game.players.add(player);
 }
 
-function removePlayer(self, playerId) {
-  self.players.getChildren().forEach((player) => {
+function removePlayer(game, playerId) {
+  game.players.getChildren().forEach((player) => {
     if (playerId === player.playerId) {
       player.destroy();
     }
   });
 }
 
-function handlePlayerInput(self, playerId, input) {
-  self.players.getChildren().forEach((player) => {
+function handlePlayerInput(game, playerId, input) {
+  game.players.getChildren().forEach((player) => {
     if (playerId === player.playerId) {
       players[player.playerId].input = input;
     }
   });
 }
 
-const game = new Phaser.Game(config);
+const Game = new Phaser.Game(config);
 
 window.gameLoaded();
