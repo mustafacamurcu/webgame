@@ -8,13 +8,6 @@ const config = {
   parent: 'phaser-example',
   width: 800,
   height: 600,
-  physics: {
-    default: 'arcade',
-    arcade: {
-      debug: false,
-      gravity: { y: 500 }
-    }
-  },
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH
@@ -49,23 +42,24 @@ function preload() {
 function create() {
   const game = this;
 
-  game.players = this.physics.add.group();
-  game.physics.add.collider(game.players);
+  game.players = this.add.group();
 
   io.on('connection', function (socket) {
     console.log('User ('+socket.id+') connected.');
 
     players[socket.id] = {
       direction: 'right',
-      x: randomPosition(50, 700),
-      y: 300,
+      x: randomPosition(2, 5)*32,
+      y: 4*32,
       anim: 'idle',
       playerId: socket.id,
       character: randomCharacter(),
       input: {
         left: false,
         right: false,
-        up: false
+        up: false,
+        down: false,
+        space: false
       }
     };
 
@@ -78,17 +72,8 @@ function create() {
     const backgroundImage = game.add.image(0, 0, 'background').setOrigin(0, 0);
     // Scale the image to better match our game's resolution
     backgroundImage.setScale(2, 0.8);
-    // Add the platform layer as a static group, the player would be able
-    // to jump on platforms like world collisions but they shouldn't move
-    const platforms = map.createStaticLayer('Platforms', tileset, 0, 200);
-    // There are many ways to set collision between tiles and players
-    // As we want players to collide with all of the platforms, we tell Phaser to
-    // set collisions for every tile in our platform layer whose index isn't -1.
-    // Tiled indices can only be >= 0, therefore we are colliding with all of
-    // the platform layer
-    platforms.setCollisionByExclusion(-1, true);
 
-    addPlayer(game, players[socket.id], platforms);
+    addPlayer(game, players[socket.id]);
 
     // send the players object to the new player
     socket.emit('currentPlayers', players);
@@ -103,46 +88,51 @@ function create() {
       delete players[socket.id];
     });
 
-    socket.on('playerInput', function (inputData) {
-      handlePlayerInput(game, socket.id, inputData);
+    socket.on('playerInput', function (input) {
+      game.players.getChildren().forEach((player) => {
+        let id = socket.id;
+        if (input.space) {
+          players[id].direction = 'stop';
+        } else if (input.left) {
+          players[id].direction = 'left';
+        } else if (input.right) {
+          players[id].direction = 'right';
+        } else if (input.up) {
+          players[id].direction = 'up';
+        } else if (input.down) {
+          players[id].direction = 'down';
+        }
+      });
     });
   });
 
-
+  //tick
+  setInterval(() => {
+    this.players.getChildren().forEach((player) => {
+      let id = player.playerId;
+      let dir = players[id].direction;
+      if (dir == 'stop') {
+        player.x += 0;
+      } else if (dir == 'left') {
+        player.x -= 32;
+      } else if (dir == 'right') {
+        player.x += 32;
+      } else if (dir == 'up') {
+        player.y -= 32;
+      } else if (dir == 'down') {
+        player.y += 32;
+      }
+      players[id].x = player.x;
+      players[id].y = player.y;
+      players[id].anim = 'idle';
+    });
+  }, 1000);
 }
 
 function update() {
-  this.players.getChildren().forEach((player) => {
-    let id = player.playerId;
-    let anim = 'idle';
-    const input = players[id].input;
-    if (input.left) {
-      //player.setVelocityX(-200);
-      if (player.body.onFloor()) {
-        anim = 'walk';
-      }
-    } else if (input.right) {
-      //player.setVelocityX(200);
-      if (player.body.onFloor()) {
-        anim = 'walk';
-      }
-    } else {
-      player.setVelocityX(0);
-    }
-
-    if (input.up && player.body.onFloor()) {
-      player.setVelocityY(-350);
-      anim = 'jump';
-    }
-
-    players[id].x = player.x;
-    players[id].y = player.y;
-    players[id].direction = player.body.velocity.x < 0 ? 'left' : 'right';
-    players[id].anim = anim;
-  });
-
   io.emit('playerUpdates', players);
 }
+
 
 function randomPosition(min, max) {
   return Math.floor(Math.random() * max) + min;
@@ -152,13 +142,10 @@ function randomCharacter() {
   return characters[randomPosition(0,2)];
 }
 
-function addPlayer(game, playerInfo, platforms) {
-  const player = game.physics.add.sprite(playerInfo.x, playerInfo.y, playerInfo.character);
+function addPlayer(game, playerInfo) {
+  const player = game.add.sprite(playerInfo.x, playerInfo.y, playerInfo.character);
   player.setOrigin(playerInfo.x, playerInfo.y);
   player.setDisplaySize(53, 40);
-  player.setBounce(0.1); // our player will bounce from items
-  player.setCollideWorldBounds(true); // don't go out of the map
-  game.physics.add.collider(player, platforms);
   player.playerId = playerInfo.playerId;
   game.players.add(player);
 }
@@ -172,6 +159,7 @@ function removePlayer(game, playerId) {
 }
 
 function handlePlayerInput(game, playerId, input) {
+
   game.players.getChildren().forEach((player) => {
     if (playerId === player.playerId) {
       players[player.playerId].input = input;
